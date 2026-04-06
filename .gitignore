@@ -1,0 +1,9 @@
+node_modules/
+*.mp4
+*.NMEA
+*.nmea
+.DS_Store
+_test_run_output/
+_test/
+_test_full/
+_test_sparse/
