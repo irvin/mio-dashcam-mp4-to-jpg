@@ -1,12 +1,12 @@
 # mio-dashcam-convert
 
-依 **NMEA** 與 **MP4** 對時，擷取 JPEG 並寫入 **EXIF GPS** 與時間欄位。流程與假設見同資料夾 **[PLAN.md](./PLAN.md)**。
+處理 MIO 行車記錄器的 NMEA / MP4 檔案，依 NMEA 點位擷取 JPEG 並寫入 **EXIF GPS** 等 metadata 欄位。
 
 ## 需求
 
 - **Node.js** 20 以上  
 - **ffmpeg**、**ffprobe**（需在 `PATH` 內）  
-- 安裝後會透過 npm 取得 **ExifTool**（`exiftool-vendored`）與 **sharp**（**校正模式**疊印時間／WGS84 用）
+- 安裝後會透過 npm 取得 **ExifTool**（`exiftool-vendored`）與 **sharp**（校正模式疊印時間／WGS84 用）
 
 ## 安裝
 
@@ -21,7 +21,7 @@ npm install
 
 ### 一般模式
 
-每筆有效 **RMC** 曆元輸出一張（未帶下方「校正」條件時進入此模式）。**不**在圖上疊字，metadata 僅在 EXIF。
+每筆有效 GPS RMC 點位輸出一張圖，將 GPS 資訊寫入 EXIF 欄位。
 
 ```bash
 node extract.js \
@@ -35,14 +35,9 @@ node extract.js \
 
 ### 校正模式
 
-**須**同時提供 **`--nmea`**。在 JPEG **左下角**另疊 **`t`、UTC、本地時間、WGS84**（與一般模式相同之 **EXIF GPS** 仍會寫入）。
+- 命令列帶有 `--sample-duration` 或 `--sample-step` 等參數時，進入校正模式，在 JPEG **左下角** 另印上 **`t`、UTC、本地時間、WGS84** 資訊。
 
-進入條件（擇一）：
-
-- 有 **`--sample-duration`**：自 **`t_base ≥ --sample-start`** 起，依 **`--sample-step`** 掃 RMC，**最多輸出 N 筆**（成功寫入之張數）。
-- **未**帶 **`--sample-duration`**，且命令列有 **`--sample-step`**：**全片**依索引間隔抽樣。
-
-**範例（前 5 筆錨點、幀位移、Make／Model）：**
+**範例（前 5 筆錨點、幀位移）：**
 
 ```bash
 node extract.js \
@@ -57,7 +52,7 @@ node extract.js \
   --model "MiVu 868W"
 ```
 
-**範例（全片、每隔 2 筆 RMC 取一錨點）：**
+**範例（全片、每隔 2 筆 GPS RMC 取一錨點）：**
 
 ```bash
 node extract.js \
@@ -71,10 +66,6 @@ node extract.js \
   --model "MiVu 868W"
 ```
 
-（全片校正時**勿**加 **`--sample-duration`**，且**須**帶 **`--sample-step`**。）
-
-- **`--gps-offset`**：**不**改變擷取幀（仍依錨點之 `t_base` 與 **`--frame-offset`**）；只改 **EXIF／疊印** 用的 **RMC**（`錨點索引 i + N`）。`-1` 表示改用**更早一筆** GPS。決定後正式批次可再加 **`--gps-offset <N>`**。
-
 ### 主要選項
 
 | 選項 | 說明 |
@@ -83,7 +74,7 @@ node extract.js \
 | `--nmea` | NMEA 文字檔 |
 | `--out` | 輸出目錄 |
 | `--fps` | 幀率；預設 `15`；設為 `0` 時改用 ffprobe |
-| `--gps-offset` | 整數 **N**；擷取幀不變，**GPS／EXIF** 改用錨點 RMC 在軌跡上前／後第 **N** 筆（`-1`＝更早一筆）。見 PLAN §2.3 |
+| `--gps-offset` | 整數 **N**；擷取幀不變，**GPS／EXIF** 改用錨點 RMC 在軌跡上前／後第 **N** 筆（`-1`＝更早一筆） |
 | `--frame-offset` | 整數；在依 `t_base` 算出的 **frame_index** 上加 **N** 幀（預設 `0`）。正數寫 **`5`**，負數寫 **`-3`**；結果小於 **0** 會視為 **0**，大於 **maxFrame** 則略過該張。例：`5` 則原本 f15→f20 |
 | `--offset` | 當地時區，例如 `+09:00`；用於 `DateTimeOriginal`／`OffsetTimeOriginal`（預設 `+09:00`） |
 | `--jpeg-quality` | MJPEG `-q:v`，**1** 畫質最佳（預設 **1**） |
@@ -96,39 +87,25 @@ node extract.js \
 
 ## 輸出檔名
 
-預設格式（PLAN §5）：
+一般模式：
 
 `YYYY-MM-DDTHH-mm-ssZ_f#####.jpg`
 
 例：`2026-04-03T01-35-46Z_f00000.jpg`
 
-校正模式另見 **`calibrate_f#####_t*.***s.jpg`**（檔名含 **frame index** 與 **`t_base`**）。
+校正模式：
+`calibrate_f#####_t*.***s.jpg`（檔名含 frame index 與 t_base）。
 
-## 實作與 PLAN 的對應
-
-- **幀選擇**：整數 fps 時 `frame_index = floor(t_base) * fps`（該曆秒**第一幀**）；非整數 fps 時 `floor(t_base × fps)`；再套用可選 **`--frame-offset`**。`t_base` 為該錨點 RMC 之影片時間；**EXIF GPS** 為 `rmcList[i + gpsOffset]`（一般模式與校正模式皆同）。  
-- **截圖**：使用 ffmpeg **`select=eq(n\,…)+…`** **分批**輸出（每批至多 25 個 `eq`），以 **frame index** 為準（PLAN §3.1）。  
-- **疊字比對**：僅**校正模式**且 **+ `--nmea`** 時以 **sharp** 在左下角疊 **時間 + WGS84**（**8** 位小數）；一般模式**不**疊圖。  
-- **時間**：`GPSDateStamp`／`GPSTimeStamp` 為 **UTC**；`DateTimeOriginal`／`CreateDate` 為 **當地牆上時間**，並設 `OffsetTimeOriginal`；`SubSecTimeOriginal` 為該當地時間之毫秒（PLAN §4.2、§8.1）。  
-- **GGA**：最近鄰合併，超過 **`--gga-max-delta-ms`** 則略過海拔／HDOP（PLAN §5）。  
-- **畫質**：預設 `-q:v 1`（PLAN §8.3）。  
-- **metadata**：由 **`buildExifTags`** 寫入；**XMP** 若需與 PLAN §4.3 完全同步，可再以 ExifTool 加寫。
-
-## 校正建議（PLAN §2.3）
+## 校正建議
 
 1. 使用 **校正模式**（**`--sample-duration`** 限制筆數，或全片僅 **`--sample-step`**）輸出 JPEG，對疊字試 **`--gps-offset`**（見上節）。  
 2. 可搭配 **`--frame-offset`** 微調實際擷取之幀。  
 3. 檢視輸出 JPEG 的 **EXIF**（UTC、座標）與畫面是否一致。  
-4. **`--offset`** 請與拍攝地**時區**一致（例如日本多為 `+09:00`）。
+4. **`--offset`** 請與拍攝地**時區**一致（例如日本為 `+09:00`）。
 
-## Panoramax／Mapillary
+## 指令範例
 
-- 建議具備：緯經度與 Ref、`DateTimeOriginal`、時區偏移；可選 `Make`／`Model`／`Artist`、`SubSecTimeOriginal`。  
-- 詳見 PLAN **§8** 與 [OSM Diary 408268](https://www.openstreetmap.org/user/FeetAndInches/diary/408268)。
-
-## 本機測試並保留輸出（供檢視）
-
-**請用真實行車記錄器配對檔**（同一段影片的 `.mp4` + `.NMEA`）產生 JPEG。輸出目錄 **`_test_run_output/`** 已列入 `.gitignore`，不會進版控。
+**請用真實行車記錄器配對檔**（同一段影片的 `.mp4` + `.NMEA`）產生 JPEG。
 
 ```bash
 mkdir -p _test_run_output
@@ -166,8 +143,6 @@ node extract.js \
   --model "MiVu 868W"
 ```
 
-完成後：根目錄為含 EXIF 之 JPEG（約每個 RMC 曆元一張，例檔約 **120** 張）；`calibrate*` 目錄內為校正用樣本（**同樣寫 EXIF**，並**疊字**）。
-
 ## 授權
 
-依專案根目錄授權；本工具 `package.json` 目前標示 `ISC`。
+本工具以 MIT License 授權。
