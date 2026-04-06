@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 依 NMEA 從 MP4 擷取 JPEG，並寫入 EXIF GPS（整數 fps：取該曆秒**第一**幀；非整數 fps：floor(t×fps)）。
+ * 依 NMEA 從 MP4 擷取 JPEG，並寫入 EXIF GPS（幀率由 ffprobe 偵測；整數 fps：取該曆秒**第一**幀；非整數 fps：floor(t×fps)）。
  * --gps-offset：同一擷取幀，GPS 改用軌跡上前／後第 N 筆 RMC（整數索引位移）。
  * --frame-offset：在算出的 frame_index 上加減整數幀（再 clamp ≥0）。
  * --crop：擷取後以 sharp 自左上角 (0,0) 裁出寬×高（一般／校正皆可用；校正時在疊字前裁切）。
@@ -14,7 +14,9 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { exiftool } = require('exiftool-vendored');
 
-const PKG = 'mio-dashcam-convert/extract.js';
+const pkg = require('./package.json');
+/** EXIF Software：與 package.json 的 name、version 一致 */
+const EXIF_SOFTWARE = `${pkg.name} ${pkg.version}`;
 
 /** 疊字／校正用座標小數位數 */
 const OVERLAY_GEO_DECIMALS = 8;
@@ -37,7 +39,6 @@ function printHelp() {
 
 選項:
   --out <目錄>           輸出目錄（省略則 ./_out/<MP4主檔名>/）
-  --fps <n>              影片幀率（預設 15，0 則用 ffprobe）
   --gps-offset <N>       整數；GPS 用「錨點 RMC 索引 ±N」（預設 0）。例：-1＝更早一筆 RMC
   --frame-offset <N|-N>  整數；在算出的 frame_index 上加 N 幀（預設 0）。正數寫 5，負數寫 -3。例：5 則 f15→f20
   --crop <w>x<h>        擷取後自左上角 (0,0) 裁出寬 w、高 h（預設不裁）。例：--crop 2560x1355；超出圖面則裁至圖內並警告
@@ -64,7 +65,6 @@ function parseArgs(argv) {
     video: null,
     nmea: null,
     outDir: null,
-    fps: 15,
     gpsOffset: 0,
     frameOffset: 0,
     /** @type {{ width: number; height: number } | null} */
@@ -88,7 +88,6 @@ function parseArgs(argv) {
     if (a === '--video') opts.video = argv[++i];
     else if (a === '--nmea') opts.nmea = argv[++i];
     else if (a === '--out') opts.outDir = argv[++i];
-    else if (a === '--fps') opts.fps = parseFloat(argv[++i]);
     else if (a === '--gps-offset') {
       const v = parseInt(argv[++i], 10);
       opts.gpsOffset = Number.isNaN(v) ? 0 : v;
@@ -491,7 +490,7 @@ function buildExifTags(meta) {
     OffsetTimeDigitized: offStr,
     SubSecTimeOriginal: subSec,
     SubSecTimeDigitized: subSec,
-    Software: PKG,
+    Software: EXIF_SOFTWARE,
     GPSTrack: course,
     GPSTrackRef: 'T',
     GPSImgDirection: course,
@@ -913,7 +912,7 @@ async function main() {
 
   if (sampleMode) {
     const probe = ffprobeVideoMeta(opts.video);
-    let fps = opts.fps > 0 ? opts.fps : probe.fps;
+    const fps = probe.fps;
     const maxFrame =
       probe.nbFrames != null && probe.nbFrames > 0
         ? probe.nbFrames - 1
@@ -938,7 +937,7 @@ async function main() {
   const ggaUtc = attachGgaUtcMsMonotonic(ggaList, rmcList[0]);
 
   const probe = ffprobeVideoMeta(opts.video);
-  let fps = opts.fps > 0 ? opts.fps : probe.fps;
+  const fps = probe.fps;
   const maxFrame =
     probe.nbFrames != null && probe.nbFrames > 0
       ? probe.nbFrames - 1

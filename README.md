@@ -1,4 +1,4 @@
-# mio-dashcam-convert
+# mio-dashcam-mp4-to-jpg
 
 處理 MIO 行車記錄器的 NMEA / MP4 檔案，依 NMEA 點位擷取 JPEG 並寫入 **EXIF GPS** 等 metadata 欄位。
 
@@ -11,14 +11,9 @@
 ## 安裝
 
 ```bash
-cd mio-dashcam-convert
+cd mio-dashcam-mp4-to-jpg
 npm install
 ```
-
-## 輸出目錄
-
-- **未指定 `--out`** 時，預設寫入 **`./_out/<MP4 主檔名>/`**（主檔名＝不含副檔名，例如 `FILE260403-103546F.mp4` → `./_out/FILE260403-103546F/`）。
-- 同一支影片若要多種輸出（例如一般全片、校正、稀疏取樣），請用子目錄區分，例如 **`./_out/FILE260403-103546F/calibrate`**、**`./_out/FILE260403-103546F/sparse`**。
 
 ## 使用
 
@@ -74,6 +69,10 @@ node extract.js \
   --model "MiVu 868W"
 ```
 
+## 輸出目錄
+
+- **未指定 `--out`** 時，預設寫入 **`./_out/<MP4 主檔名>/`**（主檔名＝不含副檔名，例如 `FILE260403-103546F.mp4` → `./_out/FILE260403-103546F/`）。
+
 ### 主要選項
 
 | 選項 | 說明 |
@@ -81,10 +80,9 @@ node extract.js \
 | `--video` | 影片路徑（H.264 MP4 等） |
 | `--nmea` | NMEA 文字檔 |
 | `--out` | 輸出目錄；**省略**時為 **`./_out/<MP4 主檔名>/`** |
-| `--fps` | 幀率；預設 `15`；設為 `0` 時改用 ffprobe |
 | `--gps-offset` | 整數 **N**；擷取幀不變，**GPS／EXIF** 改用錨點 RMC 在軌跡上前／後第 **N** 筆（`-1`＝更早一筆） |
 | `--frame-offset` | 整數；在依 `t_base` 算出的 **frame_index** 上加 **N** 幀（預設 `0`）。正數寫 **`5`**，負數寫 **`-3`**；結果小於 **0** 會視為 **0**，大於 **maxFrame** 則略過該張。例：`5` 則原本 f15→f20 |
-| `--crop` | **`<寬>x<高>`**（例：`--crop 2560x1355`）；擷取後自**左上角 (0,0)** 裁出該寬高矩形（預設不裁）。若寬或高大於圖面，則裁至圖內並警告。**校正模式**先裁切再疊字。需 **sharp** |
+| `--crop` | **`<寬>x<高>`**（例：`--crop 2560x1355`）；擷取後自**左上角 (0,0)** 裁出該寬高矩形（預設不裁）。若寬或高大於圖面，則裁至圖內並警告。 |
 | `--offset` | 當地時區，例如 `+09:00`；用於 `DateTimeOriginal`／`OffsetTimeOriginal`（預設 `+09:00`） |
 | `--jpeg-quality` | MJPEG `-q:v`，**1** 畫質最佳（預設 **1**） |
 | `--gga-max-delta-ms` | 與 `$GNGGA` 合併的最大時間差（預設 **1000** ms），超過則不寫海拔／HDOP |
@@ -96,14 +94,9 @@ node extract.js \
 
 ## 輸出檔名
 
-一般模式：
+一般模式：`YYYY-MM-DDTHH-mm-ssZ_f#####.jpg`
 
-`YYYY-MM-DDTHH-mm-ssZ_f#####.jpg`
-
-例：`2026-04-03T01-35-46Z_f00000.jpg`
-
-校正模式：
-`calibrate_f#####_t*.***s.jpg`（檔名含 frame index 與 t_base）。
+校正模式：`calibrate_f#####_t*.***s.jpg`（檔名含 frame index 與 t_base）。
 
 ## 校正建議
 
@@ -113,8 +106,6 @@ node extract.js \
 4. **`--offset`** 請與拍攝地**時區**一致（例如日本為 `+09:00`）。
 
 ## 指令範例
-
-**請用真實行車記錄器配對檔**（同一段影片的 `.mp4` + `.NMEA`）產生 JPEG。
 
 ```bash
 node extract.js \

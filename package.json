@@ -1,5 +1,5 @@
 {
-  "name": "mio-dashcam-convert",
+  "name": "mio-dashcam-mp4-to-jpg",
   "version": "1.0.0",
   "description": "Extract JPEG frames from dashcam MP4 using NMEA GPS; write EXIF.",
   "main": "extract.js",
