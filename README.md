@@ -110,7 +110,7 @@ node extract.js \
 
 ## 輸出檔名
 
-一般模式：`YYYY-MM-DDTHH-mm-ssZ_f#####.jpg`
+一般模式：`YYYY-MM-DDTHH-mm-ss±HHMM_f#####.jpg`（**當地牆上時間**＋**與 `--offset` 相同之時區後綴**，例如 `+0900`；**非** UTC 的 `Z`，以免排序／閱讀時跨日）
 
 校正模式：`calibrate_f#####_t*.***s.jpg`（檔名含 frame index 與 t_base）。
 

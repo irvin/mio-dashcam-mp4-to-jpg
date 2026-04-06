@@ -4,7 +4,7 @@
  * --gps-offset：同一擷取幀，GPS 改用軌跡上前／後第 N 筆 RMC（整數索引位移）。
  * --frame-offset：在算出的 frame_index 上加減整數幀（再 clamp ≥0）。
  * --crop：擷取後以 sharp 自左上角 (0,0) 裁出寬×高（一般／校正皆可用；校正時在疊字前裁切）。
- * XMP 未另寫入；見 PLAN §4.3 與 README。
+ * 僅寫 EXIF／GPS；寫入時移除 **全部 XMP**（`-XMP:all=`），避免平台誤讀 XMP 時間。
  * 截圖：以 frame index 用 ffmpeg select 一次解碼（見 PLAN §3.1）。
  * 需 PATH 中有 ffmpeg、ffprobe。
  */
@@ -444,13 +444,23 @@ function formatGpsTimeStamp(utcMs) {
   return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
 
-function formatIsoFilenameUtc(utcMs) {
-  const d = new Date(utcMs);
+/** 檔名用：當地牆上時間（與 --offset 一致）+ 時區後綴，避免 UTC（Z）造成跨日與直覺不符 */
+function formatIsoFilenameLocal(utcMs, offsetMinutes) {
+  const localMs = utcMs + offsetMinutes * 60 * 1000;
+  const d = new Date(localMs);
   const pad = (n) => String(n).padStart(2, '0');
-  return (
-    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}` +
-    `T${pad(d.getUTCHours())}-${pad(d.getUTCMinutes())}-${pad(d.getUTCSeconds())}Z`
-  );
+  const y = d.getUTCFullYear();
+  const mo = d.getUTCMonth() + 1;
+  const day = d.getUTCDate();
+  const h = d.getUTCHours();
+  const mi = d.getUTCMinutes();
+  const s = d.getUTCSeconds();
+  const sign = offsetMinutes >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMinutes);
+  const oh = Math.floor(abs / 60);
+  const om = abs % 60;
+  const off = `${sign}${pad(oh)}${pad(om)}`;
+  return `${y}-${pad(mo)}-${pad(day)}T${pad(h)}-${pad(mi)}-${pad(s)}${off}`;
 }
 
 function knotsToKmh(kn) {
@@ -482,10 +492,19 @@ function buildExifTags(meta) {
     GPSLatitudeRef: latDec >= 0 ? 'N' : 'S',
     GPSLongitudeRef: lonDec >= 0 ? 'E' : 'W',
     GPSMapDatum: 'WGS-84',
-    GPSDateStamp: formatGpsDateStamp(utcMs),
-    GPSTimeStamp: formatGpsTimeStamp(utcMs),
+    // Panoramax 目前會優先將 GPSDateStamp/GPSTimeStamp 視為拍攝時間（UTC），
+    // 造成介面顯示比本地時間少 9 小時；此處不寫入以避免誤判。
+    // 時間欄位盡量對齊參考圖（Mapillary downloader 產物）的寫法與群組分佈
     DateTimeOriginal: localDt,
+    DateTimeDigitized: localDt,
     CreateDate: localDt,
+    ModifyDate: localDt,
+    'IFD0:ModifyDate': localDt,
+    'EXIF:DateTimeOriginal': localDt,
+    'EXIF:DateTimeDigitized': localDt,
+    'EXIF:CreateDate': localDt,
+    'EXIF:ModifyDate': localDt,
+    OffsetTime: offStr,
     OffsetTimeOriginal: offStr,
     OffsetTimeDigitized: offStr,
     SubSecTimeOriginal: subSec,
@@ -496,7 +515,6 @@ function buildExifTags(meta) {
     GPSImgDirection: course,
     GPSImgDirectionRef: 'T',
   };
-
   if (Number.isFinite(altM)) {
     tags.GPSAltitude = Math.abs(altM);
     tags.GPSAltitudeRef = altM >= 0 ? 0 : 1;
@@ -704,7 +722,7 @@ async function overlayMultiLineTextOnJpeg(jpegPath, lines, jpegQuality) {
 
 async function writeGpsExif(jpegPath, meta) {
   const tags = buildExifTags(meta);
-  await exiftool.write(jpegPath, tags, ['-overwrite_original']);
+  await exiftool.write(jpegPath, tags, ['-overwrite_original', '-XMP:all=']);
 }
 
 /** 與一般模式相同之 EXIF GPS（含 GGA 合併規則）；疊字後呼叫以免被 sharp 洗掉。 */
@@ -1009,7 +1027,7 @@ async function main() {
     if (!fs.existsSync(seqPath)) {
       throw new Error(`預期輸出不存在: ${seqPath}`);
     }
-    const iso = formatIsoFilenameUtc(j.rmc.utcMs);
+    const iso = formatIsoFilenameLocal(j.rmc.utcMs, offsetMinutes);
     const finalName = `${iso}_f${String(j.frameIndex).padStart(5, '0')}.jpg`;
     const finalPath = path.join(opts.outDir, finalName);
     fs.renameSync(seqPath, finalPath);
