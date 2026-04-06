@@ -35,6 +35,22 @@ node extract.js \
 
 （亦可省略 **`--out`**，等同 **`./_out/FILE260403-103546F`**。）
 
+### 批次（資料夾）
+
+**`batch-extract.js`** 的 **`--video`**、**`--nmea`** 為**目錄**：掃描影片目錄內頂層的 **`.mp4`**，依**主檔名**在 NMEA 目錄尋找同名檔（例如 `.NMEA`／`.nmea`），逐一呼叫 **`extract.js`**。其餘選項與 **`extract.js`** 相同；若帶 **`--out <基底目錄>`**，每支影片輸出至 **`<基底目錄>/<主檔名>/`**，未帶則仍為 **`./_out/<主檔名>/`**。可加 **`--dry-run`** 僅列出配對與將執行的指令。
+
+```bash
+node batch-extract.js \
+  --video ./MIO/F \
+  --nmea ./MIO/NMEA \
+  --offset +09:00 \
+  --jpeg-quality 3 \
+  --frame-offset 7 \
+  --crop 2560x1355 \
+  --make Mio \
+  --model "MiVu 868W"
+```
+
 ### 校正模式
 
 - 命令列帶有 `--sample-duration` 或 `--sample-step` 等參數時，進入校正模式，在 JPEG **左下角** 另印上 **`t`、UTC、本地時間、WGS84** 資訊。

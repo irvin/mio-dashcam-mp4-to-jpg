@@ -4,7 +4,8 @@
   "description": "Extract JPEG frames from dashcam MP4 using NMEA GPS; write EXIF.",
   "main": "extract.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "batch": "node batch-extract.js"
   },
   "engines": {
     "node": ">=20"
