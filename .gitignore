@@ -3,3 +3,4 @@ node_modules/
 *.NMEA
 *.nmea
 .DS_Store
+_out/

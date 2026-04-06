@@ -3,6 +3,7 @@
  * 依 NMEA 從 MP4 擷取 JPEG，並寫入 EXIF GPS（整數 fps：取該曆秒**第一**幀；非整數 fps：floor(t×fps)）。
  * --gps-offset：同一擷取幀，GPS 改用軌跡上前／後第 N 筆 RMC（整數索引位移）。
  * --frame-offset：在算出的 frame_index 上加減整數幀（再 clamp ≥0）。
+ * --crop：擷取後以 sharp 自左上角 (0,0) 裁出寬×高（一般／校正皆可用；校正時在疊字前裁切）。
  * XMP 未另寫入；見 PLAN §4.3 與 README。
  * 截圖：以 frame index 用 ffmpeg select 一次解碼（見 PLAN §3.1）。
  * 需 PATH 中有 ffmpeg、ffprobe。
@@ -18,15 +19,28 @@ const PKG = 'mio-dashcam-convert/extract.js';
 /** 疊字／校正用座標小數位數 */
 const OVERLAY_GEO_DECIMALS = 8;
 
+/**
+ * 未指定 `--out` 時：`_out/<MP4 主檔名>/`（主檔名＝不含副檔名，例如 FILE260403-103546F）。
+ */
+function defaultOutDirFromVideo(videoPath) {
+  if (!videoPath || typeof videoPath !== 'string') return null;
+  const base = path.basename(videoPath, path.extname(videoPath));
+  if (!base) return null;
+  return path.join('_out', base);
+}
+
 function printHelp() {
   console.log(`
 用法:
-  node extract.js --video <檔.mp4> --nmea <檔.nmea> --out <輸出目錄> [選項]
+  node extract.js --video <檔.mp4> --nmea <檔.nmea> [選項]
+  未指定 --out 時，輸出至 ./_out/<MP4主檔名>/
 
 選項:
+  --out <目錄>           輸出目錄（省略則 ./_out/<MP4主檔名>/）
   --fps <n>              影片幀率（預設 15，0 則用 ffprobe）
   --gps-offset <N>       整數；GPS 用「錨點 RMC 索引 ±N」（預設 0）。例：-1＝更早一筆 RMC
   --frame-offset <N|-N>  整數；在算出的 frame_index 上加 N 幀（預設 0）。正數寫 5，負數寫 -3。例：5 則 f15→f20
+  --crop <w>x<h>        擷取後自左上角 (0,0) 裁出寬 w、高 h（預設不裁）。例：--crop 2560x1355；超出圖面則裁至圖內並警告
   --offset <±HH:MM>      當地時區（DateTimeOriginal 用），預設 +09:00
   --jpeg-quality <n>     MJPEG -q:v（1 最佳畫質，預設 1）
   --gga-max-delta-ms <n> 與 GGA 合併最大時間差（預設 1000），超過則海拔／HDOP 略過
@@ -39,9 +53,9 @@ function printHelp() {
   --help                 顯示此說明
 
 範例:
-  node extract.js --video ./FILE260403-103546F.mp4 --nmea ./FILE260403-103546F.NMEA --out ./out --offset +09:00 --gps-offset -1
-  node extract.js --video ./FILE260403-103546F.mp4 --nmea ./FILE260403-103546F.NMEA --out ./_test --sample-duration 5 --sample-step 1 --offset +09:00 --frame-offset 7 --make Mio --model "MiVu 868W"
-  node extract.js --video ./FILE260403-103546F.mp4 --nmea ./FILE260403-103546F.NMEA --out ./_test_sparse --sample-step 2 --offset +09:00
+  node extract.js --video ./FILE260403-103546F.mp4 --nmea ./FILE260403-103546F.NMEA --offset +09:00 --gps-offset -1
+  node extract.js --video ./FILE260403-103546F.mp4 --nmea ./FILE260403-103546F.NMEA --out ./_out/FILE260403-103546F/calibrate --sample-duration 5 --sample-step 1 --offset +09:00 --frame-offset 7 --crop 2560x1355 --make Mio --model "MiVu 868W"
+  node extract.js --video ./FILE260403-103546F.mp4 --nmea ./FILE260403-103546F.NMEA --out ./_out/FILE260403-103546F/sparse --sample-step 2 --offset +09:00
 `);
 }
 
@@ -53,6 +67,8 @@ function parseArgs(argv) {
     fps: 15,
     gpsOffset: 0,
     frameOffset: 0,
+    /** @type {{ width: number; height: number } | null} */
+    crop: null,
     jpegQuality: 1,
     tzOffsetStr: '+09:00',
     ggaMaxDeltaMs: 1000,
@@ -81,6 +97,21 @@ function parseArgs(argv) {
       const raw = String(argv[++i] ?? '').trim();
       const v = parseInt(raw, 10);
       opts.frameOffset = Number.isNaN(v) ? 0 : v;
+    }
+    else if (a === '--crop') {
+      const raw = String(argv[++i] ?? '').trim();
+      const m = raw.match(/^(\d+)\s*[xX]\s*(\d+)$/);
+      if (!m) {
+        console.error('--crop 須為 <寬>x<高> 正整數，例如 2560x1355');
+        process.exit(1);
+      }
+      const cw = parseInt(m[1], 10);
+      const ch = parseInt(m[2], 10);
+      if (cw < 1 || ch < 1) {
+        console.error('--crop 寬高須為正整數');
+        process.exit(1);
+      }
+      opts.crop = { width: cw, height: ch };
     }
     else if (a === '--jpeg-quality') opts.jpegQuality = parseInt(argv[++i], 10);
     else if (a === '--offset') opts.tzOffsetStr = argv[++i];
@@ -550,6 +581,53 @@ function ffmpegQvToSharpQuality(qv) {
   return Math.min(100, Math.max(1, Math.round(100 - ((q - 1) / 30) * 99)));
 }
 
+/**
+ * 自 JPEG 左上角 (0,0) 裁出 crop.width × crop.height；未指定 crop 則不處理。需 sharp。
+ * 若請求範圍大於圖面，則裁至圖內並警告。校正模式應在疊字**之前**呼叫。
+ */
+async function cropTopLeftIfNeeded(jpegPath, crop, jpegQuality) {
+  if (!crop || !Number.isFinite(crop.width) || !Number.isFinite(crop.height)) {
+    return;
+  }
+  if (crop.width < 1 || crop.height < 1) return;
+  let sharp;
+  try {
+    sharp = require('sharp');
+  } catch (e) {
+    throw new Error('需要安裝 sharp（請在專案目錄執行 npm install）');
+  }
+  const sharpQ = ffmpegQvToSharpQuality(jpegQuality);
+  const meta = await sharp(jpegPath).metadata();
+  const iw = meta.width;
+  const ih = meta.height;
+  if (!iw || !ih) {
+    throw new Error('無法讀取圖片尺寸');
+  }
+  let ew = crop.width;
+  let eh = crop.height;
+  if (ew > iw || eh > ih) {
+    console.warn(
+      `crop ${ew}x${eh} 大於圖面 ${iw}x${ih}，改裁 ${Math.min(ew, iw)}x${Math.min(eh, ih)}：${jpegPath}`
+    );
+    ew = Math.min(ew, iw);
+    eh = Math.min(eh, ih);
+  }
+  const tmpPath = `${jpegPath}.crop.tmp.jpg`;
+  await sharp(jpegPath)
+    .extract({ left: 0, top: 0, width: ew, height: eh })
+    .jpeg({ quality: sharpQ, mozjpeg: true })
+    .toFile(tmpPath);
+  try {
+    fs.copyFileSync(tmpPath, jpegPath);
+  } finally {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
 function escapeXmlText(s) {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -745,6 +823,8 @@ async function runCalibrationSample(opts, fps, maxFrame) {
     const finalPath = path.join(opts.outDir, finalName);
     fs.renameSync(seqPath, finalPath);
 
+    await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
+
     const lines = buildCalibrationOverlayLines(
       j,
       j.rmc.utcMs,
@@ -776,8 +856,12 @@ async function runCalibrationSample(opts, fps, maxFrame) {
     opts.frameOffset != null && opts.frameOffset !== 0
       ? `，frame-offset=${opts.frameOffset}`
       : '';
+  const cropNote =
+    opts.crop != null
+      ? `，crop=${opts.crop.width}x${opts.crop.height}`
+      : '';
   console.log(
-    `完成（校正·${modeLabel}）：${jobs.length} 張（fps=${fps}，RMC 索引間隔=${pointStep}，t≈${tMin.toFixed(3)}…${tMax.toFixed(3)}s${foNote}）（已疊印；已寫 EXIF GPS）`
+    `完成（校正·${modeLabel}）：${jobs.length} 張（fps=${fps}，RMC 索引間隔=${pointStep}，t≈${tMin.toFixed(3)}…${tMax.toFixed(3)}s${foNote}${cropNote}）（已疊印；已寫 EXIF GPS）`
   );
 }
 
@@ -787,8 +871,16 @@ async function main() {
     printHelp();
     process.exit(0);
   }
-  if (!opts.video || !opts.outDir) {
-    console.error('請提供 --video、--out');
+  if (!opts.video) {
+    console.error('請提供 --video');
+    printHelp();
+    process.exit(1);
+  }
+  if (!opts.outDir) {
+    opts.outDir = defaultOutDirFromVideo(opts.video);
+  }
+  if (!opts.outDir) {
+    console.error('無法決定輸出目錄（請指定 --out）');
     printHelp();
     process.exit(1);
   }
@@ -923,6 +1015,8 @@ async function main() {
     const finalPath = path.join(opts.outDir, finalName);
     fs.renameSync(seqPath, finalPath);
 
+    await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
+
     const payload = {
       latDec: j.rmc.latDec,
       lonDec: j.rmc.lonDec,
@@ -949,8 +1043,10 @@ async function main() {
     opts.frameOffset != null && opts.frameOffset !== 0
       ? `，frame-offset=${opts.frameOffset}`
       : '';
+  const cropNote =
+    opts.crop != null ? `，crop=${opts.crop.width}x${opts.crop.height}` : '';
   console.log(
-    `完成：${jobs.length} 張（fps=${fps}，maxFrame=${maxFrame}，tz=${opts.tzOffsetStr}，gps-offset=${opts.gpsOffset}${foNote}）`
+    `完成：${jobs.length} 張（fps=${fps}，maxFrame=${maxFrame}，tz=${opts.tzOffsetStr}，gps-offset=${opts.gpsOffset}${foNote}${cropNote}）`
   );
 }
 
