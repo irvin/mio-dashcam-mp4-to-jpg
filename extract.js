@@ -492,8 +492,10 @@ function buildExifTags(meta) {
     GPSLatitudeRef: latDec >= 0 ? 'N' : 'S',
     GPSLongitudeRef: lonDec >= 0 ? 'E' : 'W',
     GPSMapDatum: 'WGS-84',
-    // Panoramax 目前會優先將 GPSDateStamp/GPSTimeStamp 視為拍攝時間（UTC），
-    // 造成介面顯示比本地時間少 9 小時；此處不寫入以避免誤判。
+    // 逐步回補測試（第 1 組）：先只加回日期，不加 GPS 時分秒
+    GPSDateStamp: formatGpsDateStamp(utcMs),
+    // 第 3 組：確認 GPSTimeStamp 會觸發 Panoramax UTC 顯示，故維持不寫入
+    GPSVersionID: '2 3 0 0',
     // 時間欄位盡量對齊參考圖（Mapillary downloader 產物）的寫法與群組分佈
     DateTimeOriginal: localDt,
     DateTimeDigitized: localDt,
@@ -505,8 +507,11 @@ function buildExifTags(meta) {
     'EXIF:CreateDate': localDt,
     'EXIF:ModifyDate': localDt,
     OffsetTime: offStr,
+    'EXIF:OffsetTime': offStr,
     OffsetTimeOriginal: offStr,
+    'EXIF:OffsetTimeOriginal': offStr,
     OffsetTimeDigitized: offStr,
+    'EXIF:OffsetTimeDigitized': offStr,
     SubSecTimeOriginal: subSec,
     SubSecTimeDigitized: subSec,
     Software: EXIF_SOFTWARE,
@@ -722,6 +727,19 @@ async function overlayMultiLineTextOnJpeg(jpegPath, lines, jpegQuality) {
 
 async function writeGpsExif(jpegPath, meta) {
   const tags = buildExifTags(meta);
+  // 補齊 EXIF 子 IFD 尺寸欄位（部分平台/工具會優先讀這組）
+  try {
+    const sharp = require('sharp');
+    const dim = await sharp(jpegPath).metadata();
+    if (Number.isFinite(dim.width) && dim.width > 0) {
+      tags.ExifImageWidth = dim.width;
+    }
+    if (Number.isFinite(dim.height) && dim.height > 0) {
+      tags.ExifImageHeight = dim.height;
+    }
+  } catch (_) {
+    // 讀不到尺寸時不阻斷主流程，維持原有 EXIF/GPS 寫入
+  }
   await exiftool.write(jpegPath, tags, ['-overwrite_original', '-XMP:all=']);
 }
 
