@@ -22,6 +22,7 @@ function printHelp() {
   - 找不到對應 NMEA 時略過並警告。
   - 若指定 --out <基底目錄>，每支影片輸出至 <基底目錄>/<主檔名>/；未指定則與 extract 相同（./_out/<主檔名>/）。
   - --dry-run 只列出配對，不執行 extract。
+  - 可透過 --write-parallel <N> 轉給 extract.js，平行執行擷取後寫檔（crop/EXIF）。
 
 其餘選項（--offset、--jpeg-quality、--frame-offset、--crop、校正模式等）皆轉給 extract.js。
 `);
@@ -59,6 +60,10 @@ function collectForwardArgs(argv) {
       continue;
     }
     if (a === '--jpeg-quality') {
+      parts.push(a, argv[++i]);
+      continue;
+    }
+    if (a === '--write-parallel') {
       parts.push(a, argv[++i]);
       continue;
     }

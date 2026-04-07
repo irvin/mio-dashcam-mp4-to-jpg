@@ -44,6 +44,7 @@ function printHelp() {
   --crop <w>x<h>        擷取後自左上角 (0,0) 裁出寬 w、高 h（預設不裁）。例：--crop 2560x1355；超出圖面則裁至圖內並警告
   --offset <±HH:MM>      當地時區（DateTimeOriginal 用），預設 +09:00
   --jpeg-quality <n>     MJPEG -q:v（1 最佳畫質，預設 1）
+  --write-parallel <N>   擷取後寫檔（rename/crop/EXIF）平行數，整數 ≥1（預設 4）
   --gga-max-delta-ms <n> 與 GGA 合併最大時間差（預設 1000），超過則海拔／HDOP 略過
   --make <字串>          EXIF Make（選填）
   --model <字串>         EXIF Model（選填）
@@ -70,6 +71,7 @@ function parseArgs(argv) {
     /** @type {{ width: number; height: number } | null} */
     crop: null,
     jpegQuality: 1,
+    writeParallel: 4,
     tzOffsetStr: '+09:00',
     ggaMaxDeltaMs: 1000,
     make: null,
@@ -113,6 +115,10 @@ function parseArgs(argv) {
       opts.crop = { width: cw, height: ch };
     }
     else if (a === '--jpeg-quality') opts.jpegQuality = parseInt(argv[++i], 10);
+    else if (a === '--write-parallel') {
+      const v = parseInt(argv[++i], 10);
+      opts.writeParallel = Number.isNaN(v) ? 4 : Math.max(1, v);
+    }
     else if (a === '--offset') opts.tzOffsetStr = argv[++i];
     else if (a === '--gga-max-delta-ms') opts.ggaMaxDeltaMs = parseInt(argv[++i], 10);
     else if (a === '--make') opts.make = argv[++i];
@@ -743,6 +749,20 @@ async function writeGpsExif(jpegPath, meta) {
   await exiftool.write(jpegPath, tags, ['-overwrite_original', '-XMP:all=']);
 }
 
+async function runWithConcurrency(items, limit, worker) {
+  const n = Math.max(1, Number(limit) || 1);
+  let idx = 0;
+  const runners = new Array(Math.min(n, items.length)).fill(0).map(async () => {
+    while (true) {
+      const i = idx;
+      idx += 1;
+      if (i >= items.length) break;
+      await worker(items[i], i);
+    }
+  });
+  await Promise.all(runners);
+}
+
 /** 與一般模式相同之 EXIF GPS（含 GGA 合併規則）；疊字後呼叫以免被 sharp 洗掉。 */
 async function writeGpsExifForJob(
   jpegPath,
@@ -1039,39 +1059,42 @@ async function main() {
   const indices = jobs.map((j) => j.frameIndex);
   runFfmpegExtractBatch(opts.video, indices, tmpPattern, opts.jpegQuality);
 
-  for (let i = 0; i < jobs.length; i++) {
-    const j = jobs[i];
-    const seqPath = path.join(opts.outDir, `${tmpPrefix}${String(i + 1).padStart(5, '0')}.jpg`);
-    if (!fs.existsSync(seqPath)) {
-      throw new Error(`預期輸出不存在: ${seqPath}`);
+  await runWithConcurrency(
+    jobs.map((j, i) => ({ j, i })),
+    opts.writeParallel,
+    async ({ j, i }) => {
+      const seqPath = path.join(opts.outDir, `${tmpPrefix}${String(i + 1).padStart(5, '0')}.jpg`);
+      if (!fs.existsSync(seqPath)) {
+        throw new Error(`預期輸出不存在: ${seqPath}`);
+      }
+      const iso = formatIsoFilenameLocal(j.rmc.utcMs, offsetMinutes);
+      const finalName = `${iso}_f${String(j.frameIndex).padStart(5, '0')}.jpg`;
+      const finalPath = path.join(opts.outDir, finalName);
+      fs.renameSync(seqPath, finalPath);
+
+      await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
+
+      const payload = {
+        latDec: j.rmc.latDec,
+        lonDec: j.rmc.lonDec,
+        utcMs: j.rmc.utcMs,
+        course: j.rmc.course,
+        speedKmh: knotsToKmh(j.rmc.speedKnots),
+        altM:
+          j.gga && Number.isFinite(j.gga.altitudeM) ? j.gga.altitudeM : undefined,
+        hdop: j.gga && Number.isFinite(j.gga.hdop) ? j.gga.hdop : undefined,
+        offsetMinutes,
+        make: opts.make,
+        model: opts.model,
+        artist: opts.artist,
+      };
+
+      await writeGpsExif(finalPath, payload);
+
+      const ggaNote = j.ggaSkipped ? `GGA略過(Δ${j.deltaMs}ms)` : `GGAΔ=${j.deltaMs}ms`;
+      console.log(`${finalName}  frame=${j.frameIndex}  ${ggaNote}`);
     }
-    const iso = formatIsoFilenameLocal(j.rmc.utcMs, offsetMinutes);
-    const finalName = `${iso}_f${String(j.frameIndex).padStart(5, '0')}.jpg`;
-    const finalPath = path.join(opts.outDir, finalName);
-    fs.renameSync(seqPath, finalPath);
-
-    await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
-
-    const payload = {
-      latDec: j.rmc.latDec,
-      lonDec: j.rmc.lonDec,
-      utcMs: j.rmc.utcMs,
-      course: j.rmc.course,
-      speedKmh: knotsToKmh(j.rmc.speedKnots),
-      altM:
-        j.gga && Number.isFinite(j.gga.altitudeM) ? j.gga.altitudeM : undefined,
-      hdop: j.gga && Number.isFinite(j.gga.hdop) ? j.gga.hdop : undefined,
-      offsetMinutes,
-      make: opts.make,
-      model: opts.model,
-      artist: opts.artist,
-    };
-
-    await writeGpsExif(finalPath, payload);
-
-    const ggaNote = j.ggaSkipped ? `GGA略過(Δ${j.deltaMs}ms)` : `GGAΔ=${j.deltaMs}ms`;
-    console.log(`${finalName}  frame=${j.frameIndex}  ${ggaNote}`);
-  }
+  );
 
   await exiftool.end();
   const foNote =
@@ -1081,7 +1104,7 @@ async function main() {
   const cropNote =
     opts.crop != null ? `，crop=${opts.crop.width}x${opts.crop.height}` : '';
   console.log(
-    `完成：${jobs.length} 張（fps=${fps}，maxFrame=${maxFrame}，tz=${opts.tzOffsetStr}，gps-offset=${opts.gpsOffset}${foNote}${cropNote}）`
+    `完成：${jobs.length} 張（fps=${fps}，maxFrame=${maxFrame}，tz=${opts.tzOffsetStr}，gps-offset=${opts.gpsOffset}，write-parallel=${opts.writeParallel}${foNote}${cropNote}）`
   );
 }
 
