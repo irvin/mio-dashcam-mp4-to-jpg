@@ -215,11 +215,15 @@ function main() {
   }
 
   let paired = 0;
+  let okCount = 0;
+  let failCount = 0;
+  let skippedNoNmea = 0;
   for (const videoPath of videos) {
     const stem = path.basename(videoPath, path.extname(videoPath));
     const nmeaPath = findNmeaForStem(nResolved, stem);
     if (!nmeaPath) {
       console.warn(`略過（無對應 NMEA）: ${path.basename(videoPath)}`);
+      skippedNoNmea += 1;
       continue;
     }
     paired += 1;
@@ -233,18 +237,24 @@ function main() {
       console.log(`  ${process.execPath} ${args.map((x) => (/\s/.test(x) ? JSON.stringify(x) : x)).join(' ')}`);
       continue;
     }
+    console.log(`[batch] 開始: ${stem}`);
     const r = spawnSync(process.execPath, args, {
       stdio: 'inherit',
       cwd: process.cwd(),
       env: process.env,
     });
-    if (r.status !== 0) {
-      process.exit(r.status === null ? 1 : r.status);
-    }
     if (r.error) {
-      console.error(r.error);
-      process.exit(1);
+      failCount += 1;
+      console.error(`[batch] 失敗: ${stem}（spawn error）`, r.error);
+      continue;
     }
+    if (r.status !== 0) {
+      failCount += 1;
+      console.error(`[batch] 失敗: ${stem}（exit=${r.status === null ? 1 : r.status}）`);
+      continue;
+    }
+    okCount += 1;
+    console.log(`[batch] 完成: ${stem}`);
   }
 
   if (paired === 0) {
@@ -256,6 +266,14 @@ function main() {
 
   if (dryRun) {
     console.log('[dry-run] 結束（未執行 extract）');
+    return;
+  }
+
+  console.log(
+    `[batch] 摘要：成功 ${okCount}、失敗 ${failCount}、缺少 NMEA 略過 ${skippedNoNmea}`
+  );
+  if (failCount > 0) {
+    process.exit(1);
   }
 }
 
