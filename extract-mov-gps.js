@@ -17,6 +17,7 @@ const {
   formatIsoFilenameLocal,
   frameIndexFromVideoTime,
   parseTzOffsetToMinutes,
+  rotateJpegIfNeeded,
   runFfmpegExtractBatch,
   runWithConcurrency,
   writeGpsExif,
@@ -40,7 +41,9 @@ function printHelp() {
   --start-sec <秒>       略過 t_base 小於此秒數的 GPS 點位（預設 0）
   --gps-offset <N>       擷取幀不變，JPEG EXIF GPS 改用錨點前/後第 N 筆點位（預設 0）
   --frame-offset <N|-N>  在算出的 frame_index 上加 N 幀（預設 0）
+  --rotate-deg <deg>     擷取後先順時針旋轉指定角度，再裁切/寫 EXIF（預設 0）。例：--rotate-deg 2
   --crop <w>x<h>         擷取後自左上角裁切
+  --crop-origin <x>x<y>  裁切起點；搭配 --crop 使用（預設 0x0）。例：--crop-origin 36x67
   --offset <±HH:MM>      當地時區（DateTimeOriginal 用），預設 +09:00
   --jpeg-quality <n>     MJPEG -q:v（1 最佳畫質，預設 1）
   --write-parallel <N>   擷取後寫檔平行數，預設 4
@@ -65,6 +68,7 @@ function parseArgs(argv) {
     startSec: 0,
     gpsOffset: 0,
     frameOffset: 0,
+    rotateDeg: 0,
     crop: null,
     tzOffsetStr: '+09:00',
     jpegQuality: 1,
@@ -85,7 +89,14 @@ function parseArgs(argv) {
     else if (a === '--start-sec') opts.startSec = parseNonNegativeFloat(argv[++i], 0);
     else if (a === '--gps-offset') opts.gpsOffset = parseInteger(argv[++i], 0);
     else if (a === '--frame-offset') opts.frameOffset = parseInteger(argv[++i], 0);
-    else if (a === '--crop') opts.crop = parseCrop(argv[++i]);
+    else if (a === '--rotate-deg') opts.rotateDeg = parseFloatNumber(argv[++i], 0);
+    else if (a === '--crop') opts.crop = { ...(opts.crop || {}), ...parseCrop(argv[++i]) };
+    else if (a === '--crop-origin') {
+      const origin = parseCropOrigin(argv[++i]);
+      if (!opts.crop) opts.crop = {};
+      opts.crop.left = origin.left;
+      opts.crop.top = origin.top;
+    }
     else if (a === '--offset') opts.tzOffsetStr = argv[++i];
     else if (a === '--jpeg-quality') opts.jpegQuality = parsePositiveInt(argv[++i], 1);
     else if (a === '--write-parallel') opts.writeParallel = parsePositiveInt(argv[++i], 4);
@@ -103,6 +114,11 @@ function parseArgs(argv) {
 
 function parseInteger(raw, fallback) {
   const v = parseInt(String(raw ?? '').trim(), 10);
+  return Number.isNaN(v) ? fallback : v;
+}
+
+function parseFloatNumber(raw, fallback) {
+  const v = parseFloat(String(raw ?? '').trim());
   return Number.isNaN(v) ? fallback : v;
 }
 
@@ -131,6 +147,15 @@ function parseCrop(raw) {
     process.exit(1);
   }
   return { width, height };
+}
+
+function parseCropOrigin(raw) {
+  const m = String(raw ?? '').trim().match(/^(\d+)\s*[xX,]\s*(\d+)$/);
+  if (!m) {
+    console.error('--crop-origin 須為 <x>x<y> 非負整數，例如 36x67');
+    process.exit(1);
+  }
+  return { left: parseInt(m[1], 10), top: parseInt(m[2], 10) };
 }
 
 function parseExiftoolGpsDateTime(raw) {
@@ -345,6 +370,7 @@ async function extractJpegs(opts, points) {
       const finalName = `${iso}_f${String(j.frameIndex).padStart(5, '0')}.jpg`;
       const finalPath = path.join(opts.outDir, finalName);
       fs.renameSync(seqPath, finalPath);
+      await rotateJpegIfNeeded(finalPath, opts.rotateDeg, opts.jpegQuality);
       await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
       await writeGpsExif(finalPath, {
         latDec: j.gps.latDec,
@@ -363,7 +389,7 @@ async function extractJpegs(opts, points) {
   );
 
   console.log(
-    `完成：${jobs.length} 張（fps=${fps}，maxFrame=${maxFrame}，tz=${opts.tzOffsetStr}，point-step=${opts.pointStep}，gps-offset=${opts.gpsOffset}，write-parallel=${opts.writeParallel}）`
+    `完成：${jobs.length} 張（fps=${fps}，maxFrame=${maxFrame}，tz=${opts.tzOffsetStr}，point-step=${opts.pointStep}，gps-offset=${opts.gpsOffset}，rotate-deg=${opts.rotateDeg}，write-parallel=${opts.writeParallel}）`
   );
 }
 

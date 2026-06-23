@@ -55,7 +55,15 @@ function collectForwardArgs(argv) {
       parts.push(a, argv[++i]);
       continue;
     }
+    if (a === '--rotate-deg') {
+      parts.push(a, argv[++i]);
+      continue;
+    }
     if (a === '--crop') {
+      parts.push(a, argv[++i]);
+      continue;
+    }
+    if (a === '--crop-origin') {
       parts.push(a, argv[++i]);
       continue;
     }

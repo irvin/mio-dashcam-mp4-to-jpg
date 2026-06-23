@@ -63,6 +63,9 @@ node extract-mov-gps.js \
   --out ./_out/NOML000256 \
   --offset +09:00 \
   --jpeg-quality 3 \
+  --rotate-deg 2 \
+  --crop-origin 36x67 \
+  --crop 1890x870 \
   --make "Action Cam"
 ```
 
@@ -83,6 +86,8 @@ node batch-extract-mov-gps.js \
 - **`--gpx-only`**：只輸出 GPX，不抽 JPEG。
 - **`--max-points <N>`**：每支影片最多抽 N 張，適合先做短測試。
 - **`--point-step <N>`**：每 N 筆 GPS 點位抽一張，適合降低輸出張數。
+- **`--rotate-deg <deg>`**：抽圖後先順時針旋轉指定角度，再套用 `--crop`。
+- **`--crop-origin <x>x<y>`**：裁切起點，搭配 `--crop` 使用；預設 `0x0`。
 
 ### 校正模式
 
@@ -131,6 +136,8 @@ node extract.js \
 | `--out` | 輸出目錄；**省略**時為 **`./_out/<MP4 主檔名>/`** |
 | `--gps-offset` | 整數 **N**；擷取幀不變，**GPS／EXIF** 改用錨點 RMC 在軌跡上前／後第 **N** 筆（`-1`＝更早一筆） |
 | `--frame-offset` | 整數；在依 `t_base` 算出的 **frame_index** 上加 **N** 幀（預設 `0`）。正數寫 **`5`**，負數寫 **`-3`**；結果小於 **0** 會視為 **0**，大於 **maxFrame** 則略過該張。例：`5` 則原本 f15→f20 |
+| `--rotate-deg` | 擷取後先順時針旋轉指定角度，再裁切、疊字或寫 EXIF；例：`--rotate-deg 2`。 |
+| `--crop-origin` | 裁切起點 **`<x>x<y>`**；搭配 `--crop` 使用，預設 `0x0`。 |
 | `--crop` | **`<寬>x<高>`**（例：`--crop 2560x1355`）；擷取後自**左上角 (0,0)** 裁出該寬高矩形（預設不裁）。若寬或高大於圖面，則裁至圖內並警告。 |
 | `--offset` | 當地時區，例如 `+09:00`；用於 `DateTimeOriginal`／`OffsetTimeOriginal`（預設 `+09:00`） |
 | `--jpeg-quality` | MJPEG `-q:v`，**1** 畫質最佳（預設 **1**） |

@@ -49,7 +49,9 @@ function collectForwardArgs(argv) {
       a === '--start-sec' ||
       a === '--gps-offset' ||
       a === '--frame-offset' ||
+      a === '--rotate-deg' ||
       a === '--crop' ||
+      a === '--crop-origin' ||
       a === '--offset' ||
       a === '--jpeg-quality' ||
       a === '--write-parallel' ||

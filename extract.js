@@ -3,6 +3,7 @@
  * 依 NMEA 從 MP4 擷取 JPEG，並寫入 EXIF GPS（幀率由 ffprobe 偵測；整數 fps：取該曆秒**第一**幀；非整數 fps：floor(t×fps)）。
  * --gps-offset：同一擷取幀，GPS 改用軌跡上前／後第 N 筆 RMC（整數索引位移）。
  * --frame-offset：在算出的 frame_index 上加減整數幀（再 clamp ≥0）。
+ * --rotate-deg：擷取後先以 sharp 順時針旋轉指定角度，再進行 --crop。
  * --crop：擷取後以 sharp 自左上角 (0,0) 裁出寬×高（一般／校正皆可用；校正時在疊字前裁切）。
  * 僅寫 EXIF／GPS；寫入時移除 **全部 XMP**（`-XMP:all=`），避免平台誤讀 XMP 時間。
  * 截圖：以 frame index 用 ffmpeg select 一次解碼（見 PLAN §3.1）。
@@ -41,7 +42,9 @@ function printHelp() {
   --out <目錄>           輸出目錄（省略則 ./_out/<MP4主檔名>/）
   --gps-offset <N>       整數；GPS 用「錨點 RMC 索引 ±N」（預設 0）。例：-1＝更早一筆 RMC
   --frame-offset <N|-N>  整數；在算出的 frame_index 上加 N 幀（預設 0）。正數寫 5，負數寫 -3。例：5 則 f15→f20
+  --rotate-deg <deg>     擷取後先順時針旋轉指定角度，再裁切/疊字/寫 EXIF（預設 0）。例：--rotate-deg 2
   --crop <w>x<h>        擷取後自左上角 (0,0) 裁出寬 w、高 h（預設不裁）。例：--crop 2560x1355；超出圖面則裁至圖內並警告
+  --crop-origin <x>x<y> 裁切起點；搭配 --crop 使用（預設 0x0）。例：--crop-origin 36x67
   --offset <±HH:MM>      當地時區（DateTimeOriginal 用），預設 +09:00
   --jpeg-quality <n>     MJPEG -q:v（1 最佳畫質，預設 1）
   --write-parallel <N>   擷取後寫檔（rename/crop/EXIF）平行數，整數 ≥1（預設 4）
@@ -68,6 +71,7 @@ function parseArgs(argv) {
     outDir: null,
     gpsOffset: 0,
     frameOffset: 0,
+    rotateDeg: 0,
     /** @type {{ width: number; height: number } | null} */
     crop: null,
     jpegQuality: 1,
@@ -99,6 +103,11 @@ function parseArgs(argv) {
       const v = parseInt(raw, 10);
       opts.frameOffset = Number.isNaN(v) ? 0 : v;
     }
+    else if (a === '--rotate-deg') {
+      const raw = String(argv[++i] ?? '').trim();
+      const v = parseFloat(raw);
+      opts.rotateDeg = Number.isNaN(v) ? 0 : v;
+    }
     else if (a === '--crop') {
       const raw = String(argv[++i] ?? '').trim();
       const m = raw.match(/^(\d+)\s*[xX]\s*(\d+)$/);
@@ -112,7 +121,22 @@ function parseArgs(argv) {
         console.error('--crop 寬高須為正整數');
         process.exit(1);
       }
-      opts.crop = { width: cw, height: ch };
+      opts.crop = {
+        ...(opts.crop || {}),
+        width: cw,
+        height: ch,
+      };
+    }
+    else if (a === '--crop-origin') {
+      const raw = String(argv[++i] ?? '').trim();
+      const m = raw.match(/^(\d+)\s*[xX,]\s*(\d+)$/);
+      if (!m) {
+        console.error('--crop-origin 須為 <x>x<y> 非負整數，例如 36x67');
+        process.exit(1);
+      }
+      if (!opts.crop) opts.crop = {};
+      opts.crop.left = parseInt(m[1], 10);
+      opts.crop.top = parseInt(m[2], 10);
     }
     else if (a === '--jpeg-quality') opts.jpegQuality = parseInt(argv[++i], 10);
     else if (a === '--write-parallel') {
@@ -610,7 +634,7 @@ function ffmpegQvToSharpQuality(qv) {
 }
 
 /**
- * 自 JPEG 左上角 (0,0) 裁出 crop.width × crop.height；未指定 crop 則不處理。需 sharp。
+ * 自 JPEG 指定起點裁出 crop.width × crop.height；未指定 crop 則不處理。需 sharp。
  * 若請求範圍大於圖面，則裁至圖內並警告。校正模式應在疊字**之前**呼叫。
  */
 async function cropTopLeftIfNeeded(jpegPath, crop, jpegQuality) {
@@ -631,18 +655,55 @@ async function cropTopLeftIfNeeded(jpegPath, crop, jpegQuality) {
   if (!iw || !ih) {
     throw new Error('無法讀取圖片尺寸');
   }
+  const left = Math.max(0, Math.floor(Number(crop.left) || 0));
+  const top = Math.max(0, Math.floor(Number(crop.top) || 0));
+  if (left >= iw || top >= ih) {
+    throw new Error(`crop-origin ${left}x${top} 超出圖面 ${iw}x${ih}: ${jpegPath}`);
+  }
   let ew = crop.width;
   let eh = crop.height;
-  if (ew > iw || eh > ih) {
+  const maxW = iw - left;
+  const maxH = ih - top;
+  if (ew > maxW || eh > maxH) {
     console.warn(
-      `crop ${ew}x${eh} 大於圖面 ${iw}x${ih}，改裁 ${Math.min(ew, iw)}x${Math.min(eh, ih)}：${jpegPath}`
+      `crop ${ew}x${eh}+${left}+${top} 大於圖面 ${iw}x${ih}，改裁 ${Math.min(ew, maxW)}x${Math.min(eh, maxH)}：${jpegPath}`
     );
-    ew = Math.min(ew, iw);
-    eh = Math.min(eh, ih);
+    ew = Math.min(ew, maxW);
+    eh = Math.min(eh, maxH);
   }
   const tmpPath = `${jpegPath}.crop.tmp.jpg`;
   await sharp(jpegPath)
-    .extract({ left: 0, top: 0, width: ew, height: eh })
+    .extract({ left, top, width: ew, height: eh })
+    .jpeg({ quality: sharpQ, mozjpeg: true })
+    .toFile(tmpPath);
+  try {
+    fs.copyFileSync(tmpPath, jpegPath);
+  } finally {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * 順時針旋轉 JPEG。sharp 的 rotate 正值為順時針；旋轉後畫布會自動擴張。
+ */
+async function rotateJpegIfNeeded(jpegPath, rotateDeg, jpegQuality) {
+  if (!Number.isFinite(rotateDeg) || rotateDeg === 0) {
+    return;
+  }
+  let sharp;
+  try {
+    sharp = require('sharp');
+  } catch (e) {
+    throw new Error('需要安裝 sharp（請在專案目錄執行 npm install）');
+  }
+  const sharpQ = ffmpegQvToSharpQuality(jpegQuality);
+  const tmpPath = `${jpegPath}.rotate.tmp.jpg`;
+  await sharp(jpegPath)
+    .rotate(rotateDeg, { background: { r: 0, g: 0, b: 0, alpha: 1 } })
     .jpeg({ quality: sharpQ, mozjpeg: true })
     .toFile(tmpPath);
   try {
@@ -878,6 +939,7 @@ async function runCalibrationSample(opts, fps, maxFrame) {
     const finalPath = path.join(opts.outDir, finalName);
     fs.renameSync(seqPath, finalPath);
 
+    await rotateJpegIfNeeded(finalPath, opts.rotateDeg, opts.jpegQuality);
     await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
 
     const lines = buildCalibrationOverlayLines(
@@ -1072,6 +1134,7 @@ async function main() {
       const finalPath = path.join(opts.outDir, finalName);
       fs.renameSync(seqPath, finalPath);
 
+      await rotateJpegIfNeeded(finalPath, opts.rotateDeg, opts.jpegQuality);
       await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
 
       const payload = {
@@ -1103,8 +1166,12 @@ async function main() {
       : '';
   const cropNote =
     opts.crop != null ? `，crop=${opts.crop.width}x${opts.crop.height}` : '';
+  const rotateNote =
+    opts.rotateDeg != null && opts.rotateDeg !== 0
+      ? `，rotate-deg=${opts.rotateDeg}`
+      : '';
   console.log(
-    `完成：${jobs.length} 張（fps=${fps}，maxFrame=${maxFrame}，tz=${opts.tzOffsetStr}，gps-offset=${opts.gpsOffset}，write-parallel=${opts.writeParallel}${foNote}${cropNote}）`
+    `完成：${jobs.length} 張（fps=${fps}，maxFrame=${maxFrame}，tz=${opts.tzOffsetStr}，gps-offset=${opts.gpsOffset}，write-parallel=${opts.writeParallel}${foNote}${rotateNote}${cropNote}）`
   );
 }
 
@@ -1126,6 +1193,7 @@ module.exports = {
   frameIndexFromVideoTime,
   knotsToKmh,
   parseTzOffsetToMinutes,
+  rotateJpegIfNeeded,
   runFfmpegExtractBatch,
   runWithConcurrency,
   writeGpsExif,
