@@ -1108,8 +1108,25 @@ async function main() {
   );
 }
 
-main().catch((err) => {
-  console.error(err);
-  exiftool.end().catch(() => {});
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    exiftool.end().catch(() => {});
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  applyFrameOffset,
+  buildExifTags,
+  cropTopLeftIfNeeded,
+  defaultOutDirFromVideo,
+  ffprobeVideoMeta,
+  formatIsoFilenameLocal,
+  frameIndexFromVideoTime,
+  knotsToKmh,
+  parseTzOffsetToMinutes,
+  runFfmpegExtractBatch,
+  runWithConcurrency,
+  writeGpsExif,
+};

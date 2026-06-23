@@ -51,6 +51,39 @@ node batch-extract.js \
   --model "MiVu 868W"
 ```
 
+### MOV/MP4 內嵌 GPS（不用 NMEA 側檔）
+
+若影片本身可用 `exiftool -G1 -a -s -ee "-*gps*" <檔.MOV>` 讀出
+QuickTime GPS 軌跡，可改用 **`extract-mov-gps.js`**。它會先在輸出目錄
+寫出 **`<影片主檔名>.gpx`**，再依同一批 GPS 點位抽出 JPEG 並寫入 EXIF GPS。
+
+```bash
+node extract-mov-gps.js \
+  --video ./NOML000256.MOV \
+  --out ./_out/NOML000256 \
+  --offset +09:00 \
+  --jpeg-quality 3 \
+  --make "Action Cam"
+```
+
+批次處理資料夾：
+
+```bash
+node batch-extract-mov-gps.js \
+  --video "/Volumes/Action Cam Videos/行車紀錄 - 其他/20240811-13/NOML" \
+  --out ./_out/NOML \
+  --offset +09:00 \
+  --jpeg-quality 3 \
+  --make "Action Cam"
+```
+
+常用測試選項：
+
+- **`--dry-run`**：只列出批次會處理哪些檔案。
+- **`--gpx-only`**：只輸出 GPX，不抽 JPEG。
+- **`--max-points <N>`**：每支影片最多抽 N 張，適合先做短測試。
+- **`--point-step <N>`**：每 N 筆 GPS 點位抽一張，適合降低輸出張數。
+
 ### 校正模式
 
 - 命令列帶有 `--sample-duration` 或 `--sample-step` 等參數時，進入校正模式，在 JPEG **左下角** 另印上 **`t`、UTC、本地時間、WGS84** 資訊。
