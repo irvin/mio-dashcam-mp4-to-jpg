@@ -12,6 +12,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  cropTopLeftIfNeeded,
+  ffmpegQvToSharpQuality,
+  rotateJpegIfNeeded,
+} = require('./tools/image-transform');
 const { spawnSync } = require('child_process');
 const { exiftool } = require('exiftool-vendored');
 
@@ -623,96 +628,6 @@ function runFfmpegExtractBatch(videoPath, frameIndices, outPattern, qv) {
       );
       fs.renameSync(from, to);
       outSeq++;
-    }
-  }
-}
-
-/** MJPEG -q:v（1～31）對應 sharp JPEG quality（1～100） */
-function ffmpegQvToSharpQuality(qv) {
-  const q = Math.min(31, Math.max(1, Number(qv) || 1));
-  return Math.min(100, Math.max(1, Math.round(100 - ((q - 1) / 30) * 99)));
-}
-
-/**
- * 自 JPEG 指定起點裁出 crop.width × crop.height；未指定 crop 則不處理。需 sharp。
- * 若請求範圍大於圖面，則裁至圖內並警告。校正模式應在疊字**之前**呼叫。
- */
-async function cropTopLeftIfNeeded(jpegPath, crop, jpegQuality) {
-  if (!crop || !Number.isFinite(crop.width) || !Number.isFinite(crop.height)) {
-    return;
-  }
-  if (crop.width < 1 || crop.height < 1) return;
-  let sharp;
-  try {
-    sharp = require('sharp');
-  } catch (e) {
-    throw new Error('需要安裝 sharp（請在專案目錄執行 npm install）');
-  }
-  const sharpQ = ffmpegQvToSharpQuality(jpegQuality);
-  const meta = await sharp(jpegPath).metadata();
-  const iw = meta.width;
-  const ih = meta.height;
-  if (!iw || !ih) {
-    throw new Error('無法讀取圖片尺寸');
-  }
-  const left = Math.max(0, Math.floor(Number(crop.left) || 0));
-  const top = Math.max(0, Math.floor(Number(crop.top) || 0));
-  if (left >= iw || top >= ih) {
-    throw new Error(`crop-origin ${left}x${top} 超出圖面 ${iw}x${ih}: ${jpegPath}`);
-  }
-  let ew = crop.width;
-  let eh = crop.height;
-  const maxW = iw - left;
-  const maxH = ih - top;
-  if (ew > maxW || eh > maxH) {
-    console.warn(
-      `crop ${ew}x${eh}+${left}+${top} 大於圖面 ${iw}x${ih}，改裁 ${Math.min(ew, maxW)}x${Math.min(eh, maxH)}：${jpegPath}`
-    );
-    ew = Math.min(ew, maxW);
-    eh = Math.min(eh, maxH);
-  }
-  const tmpPath = `${jpegPath}.crop.tmp.jpg`;
-  await sharp(jpegPath)
-    .extract({ left, top, width: ew, height: eh })
-    .jpeg({ quality: sharpQ, mozjpeg: true })
-    .toFile(tmpPath);
-  try {
-    fs.copyFileSync(tmpPath, jpegPath);
-  } finally {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch (_) {
-      /* ignore */
-    }
-  }
-}
-
-/**
- * 順時針旋轉 JPEG。sharp 的 rotate 正值為順時針；旋轉後畫布會自動擴張。
- */
-async function rotateJpegIfNeeded(jpegPath, rotateDeg, jpegQuality) {
-  if (!Number.isFinite(rotateDeg) || rotateDeg === 0) {
-    return;
-  }
-  let sharp;
-  try {
-    sharp = require('sharp');
-  } catch (e) {
-    throw new Error('需要安裝 sharp（請在專案目錄執行 npm install）');
-  }
-  const sharpQ = ffmpegQvToSharpQuality(jpegQuality);
-  const tmpPath = `${jpegPath}.rotate.tmp.jpg`;
-  await sharp(jpegPath)
-    .rotate(rotateDeg, { background: { r: 0, g: 0, b: 0, alpha: 1 } })
-    .jpeg({ quality: sharpQ, mozjpeg: true })
-    .toFile(tmpPath);
-  try {
-    fs.copyFileSync(tmpPath, jpegPath);
-  } finally {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch (_) {
-      /* ignore */
     }
   }
 }

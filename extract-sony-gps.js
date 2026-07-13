@@ -9,14 +9,16 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { exiftool } = require('exiftool-vendored');
 const {
-  applyFrameOffset,
   cropTopLeftIfNeeded,
+  rotateJpegIfNeeded,
+} = require('./tools/image-transform');
+const {
+  applyFrameOffset,
   defaultOutDirFromVideo,
   ffprobeVideoMeta,
   formatIsoFilenameLocal,
   frameIndexFromVideoTime,
   parseTzOffsetToMinutes,
-  rotateJpegIfNeeded,
   runFfmpegExtractBatch,
   runWithConcurrency,
   writeGpsExif,
