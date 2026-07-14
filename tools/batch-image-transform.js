@@ -3,7 +3,11 @@
 const fs = require('fs');
 const path = require('path');
 const { exiftool } = require('exiftool-vendored');
-const { transformJpeg } = require('./image-transform');
+const {
+  inspectJpegTransformLimits,
+  suggestLosslessCrops,
+  transformJpeg,
+} = require('./image-transform');
 
 function usage() {
   console.log(`用法:
@@ -19,6 +23,8 @@ function usage() {
   --jpeg-quality <N>       JPEG quality 1-100，預設 95
   --recursive              遞迴處理輸入目錄
   --overwrite              覆寫既有輸出
+  --suggest-fast-crop      抽查輸入 JPEG，提出 MCU 對齊裁切建議
+  --sample-count <N>       建議模式抽查張數，預設 10
   --help                   顯示說明
 
 範例:
@@ -59,6 +65,8 @@ function parseArgs(argv) {
     jpegQuality: 95,
     recursive: false,
     overwrite: false,
+    suggestFastCrop: false,
+    sampleCount: 10,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -86,14 +94,18 @@ function parseArgs(argv) {
       opts.recursive = true;
     } else if (arg === '--overwrite') {
       opts.overwrite = true;
+    } else if (arg === '--suggest-fast-crop') {
+      opts.suggestFastCrop = true;
+    } else if (arg === '--sample-count') {
+      opts.sampleCount = Math.floor(positiveNumber(value(argv, i++, arg), arg));
     } else {
       throw new Error(`未知參數：${arg}`);
     }
   }
 
   if (opts.help) return opts;
-  if (!opts.inputDir || !opts.outputDir || !opts.crop) {
-    throw new Error('--input-dir、--output-dir、--crop 都是必填');
+  if (!opts.inputDir || !opts.crop || (!opts.outputDir && !opts.suggestFastCrop)) {
+    throw new Error('--input-dir、--crop 都是必填；執行轉檔時另需 --output-dir');
   }
   return opts;
 }
@@ -143,12 +155,56 @@ async function runPool(jobs, concurrency, worker) {
   await Promise.all(workers);
 }
 
+function selectSamples(files, count) {
+  const sampleSize = Math.min(files.length, count);
+  if (sampleSize <= 1) return files.slice(0, sampleSize);
+  const indexes = new Set();
+  for (let i = 0; i < sampleSize; i++) {
+    indexes.add(Math.round((i * (files.length - 1)) / (sampleSize - 1)));
+  }
+  return [...indexes].sort((a, b) => a - b).map((index) => files[index]);
+}
+
+async function suggestFastCrop(files, crop, sampleCount) {
+  if (files.length === 0) throw new Error('輸入目錄沒有 JPG');
+  const samples = selectSamples(files, sampleCount);
+  const inspected = [];
+  for (const file of samples) inspected.push(await inspectJpegTransformLimits(file.full));
+  const first = inspected[0];
+  const inconsistent = inspected.some((item) =>
+    item.width !== first.width ||
+    item.height !== first.height ||
+    item.chromaSubsampling !== first.chromaSubsampling
+  );
+  const suggestions = suggestLosslessCrops(first, crop);
+  console.log(`files: ${files.length}`);
+  console.log(`sampled: ${samples.length}`);
+  console.log(`source: ${first.width}x${first.height}`);
+  console.log(`subsampling: ${first.chromaSubsampling}`);
+  console.log(`MCU: ${first.mcu.width}x${first.mcu.height}`);
+  console.log(`requested: ${crop.left}x${crop.top} + ${crop.width}x${crop.height}`);
+  console.log(`inward: ${suggestions.inward.left}x${suggestions.inward.top} + ${suggestions.inward.width}x${suggestions.inward.height}`);
+  console.log(`outward: ${suggestions.outward.left}x${suggestions.outward.top} + ${suggestions.outward.width}x${suggestions.outward.height}`);
+  if (inconsistent) {
+    console.warn('警告：輸入 JPEG 的尺寸或 chroma subsampling 不一致，以上建議只代表第一張。');
+  }
+}
+
 async function main() {
   const opts = parseArgs(process.argv);
   if (opts.help) return usage();
   if (!fs.statSync(opts.inputDir).isDirectory()) throw new Error(`找不到輸入目錄：${opts.inputDir}`);
 
   const files = listJpegs(opts.inputDir, opts.recursive);
+  if (opts.suggestFastCrop) {
+    await suggestFastCrop(files, {
+      left: opts.cropOrigin.left,
+      top: opts.cropOrigin.top,
+      width: opts.crop.width,
+      height: opts.crop.height,
+    }, opts.sampleCount);
+    return;
+  }
   const jobs = files.map(({ full, rel }) => ({ input: full, output: path.join(opts.outputDir, rel) }));
   fs.mkdirSync(opts.outputDir, { recursive: true });
   let written = 0;
