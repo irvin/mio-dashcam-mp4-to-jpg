@@ -7,7 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "batch": "node batch-extract.js",
     "batch:mov-gps": "node batch-extract-mov-gps.js",
-    "batch:sony-gps-md": "node batch-extract-sony-gps-md.js"
+    "batch:sony-gps-md": "node batch-extract-sony-gps-md.js",
+    "batch:image-transform": "node tools/batch-image-transform.js"
   },
   "engines": {
     "node": ">=20"
