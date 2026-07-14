@@ -28,6 +28,39 @@ async function replaceWithTempFile(inputPath, suffix, operation) {
   }
 }
 
+/** 一次完成旋轉與裁切，避免同一張 JPEG 被重新編碼兩次。 */
+async function transformJpeg({ input, output = input, rotateDeg = 0, crop = null, jpegQuality = 1 }) {
+  const sharp = loadSharp();
+  const sharpQ = ffmpegQvToSharpQuality(jpegQuality);
+  const tempOutput = output === input ? `${input}.transform.tmp.jpg` : output;
+  try {
+    const pipeline = sharp(input).rotate(rotateDeg, {
+      background: { r: 0, g: 0, b: 0, alpha: 1 },
+    });
+    if (crop) {
+      pipeline.extract({
+        left: Math.max(0, Math.floor(Number(crop.left) || 0)),
+        top: Math.max(0, Math.floor(Number(crop.top) || 0)),
+        width: crop.width,
+        height: crop.height,
+      });
+    }
+    await pipeline
+      .withMetadata({ orientation: 1 })
+      .jpeg({ quality: sharpQ, mozjpeg: true })
+      .toFile(tempOutput);
+    if (tempOutput !== output) fs.copyFileSync(tempOutput, output);
+  } finally {
+    if (tempOutput !== output) {
+      try {
+        fs.unlinkSync(tempOutput);
+      } catch (_) {
+        // 暫存檔不存在時不需處理。
+      }
+    }
+  }
+}
+
 /** 順時針旋轉 JPEG；旋轉後畫布會自動擴張並以黑色補邊。 */
 async function rotateJpegIfNeeded(jpegPath, rotateDeg, jpegQuality) {
   if (!Number.isFinite(rotateDeg) || rotateDeg === 0) return;
@@ -81,4 +114,5 @@ module.exports = {
   cropTopLeftIfNeeded,
   ffmpegQvToSharpQuality,
   rotateJpegIfNeeded,
+  transformJpeg,
 };

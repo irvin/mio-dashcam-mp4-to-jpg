@@ -9,8 +9,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { exiftool } = require('exiftool-vendored');
 const {
-  cropTopLeftIfNeeded,
-  rotateJpegIfNeeded,
+  transformJpeg,
 } = require('./tools/image-transform');
 const {
   applyFrameOffset,
@@ -615,8 +614,7 @@ async function extractIntervalJpegs(opts, points) {
       const finalName = `${iso}_t${String(t).padStart(5, '0')}s.jpg`;
       const finalPath = path.join(opts.outDir, finalName);
       fs.renameSync(seqPath, finalPath);
-      await rotateJpegIfNeeded(finalPath, opts.rotateDeg, opts.jpegQuality);
-      await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
+      await transformJpeg({ input: finalPath, rotateDeg: opts.rotateDeg, crop: opts.crop, jpegQuality: opts.jpegQuality });
       const baseMeta = {
         utcMs,
         offsetMinutes,
@@ -691,8 +689,7 @@ async function extractJpegs(opts, points) {
       const finalName = `${iso}_f${String(j.frameIndex).padStart(5, '0')}.jpg`;
       const finalPath = path.join(opts.outDir, finalName);
       fs.renameSync(seqPath, finalPath);
-      await rotateJpegIfNeeded(finalPath, opts.rotateDeg, opts.jpegQuality);
-      await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
+      await transformJpeg({ input: finalPath, rotateDeg: opts.rotateDeg, crop: opts.crop, jpegQuality: opts.jpegQuality });
       await writeGpsExif(finalPath, {
         latDec: j.gps.latDec,
         lonDec: j.gps.lonDec,

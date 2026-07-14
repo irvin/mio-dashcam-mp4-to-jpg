@@ -13,9 +13,8 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  cropTopLeftIfNeeded,
   ffmpegQvToSharpQuality,
-  rotateJpegIfNeeded,
+  transformJpeg,
 } = require('./tools/image-transform');
 const { spawnSync } = require('child_process');
 const { exiftool } = require('exiftool-vendored');
@@ -854,8 +853,7 @@ async function runCalibrationSample(opts, fps, maxFrame) {
     const finalPath = path.join(opts.outDir, finalName);
     fs.renameSync(seqPath, finalPath);
 
-    await rotateJpegIfNeeded(finalPath, opts.rotateDeg, opts.jpegQuality);
-    await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
+    await transformJpeg({ input: finalPath, rotateDeg: opts.rotateDeg, crop: opts.crop, jpegQuality: opts.jpegQuality });
 
     const lines = buildCalibrationOverlayLines(
       j,
@@ -1049,8 +1047,7 @@ async function main() {
       const finalPath = path.join(opts.outDir, finalName);
       fs.renameSync(seqPath, finalPath);
 
-      await rotateJpegIfNeeded(finalPath, opts.rotateDeg, opts.jpegQuality);
-      await cropTopLeftIfNeeded(finalPath, opts.crop, opts.jpegQuality);
+      await transformJpeg({ input: finalPath, rotateDeg: opts.rotateDeg, crop: opts.crop, jpegQuality: opts.jpegQuality });
 
       const payload = {
         latDec: j.rmc.latDec,
@@ -1109,6 +1106,7 @@ module.exports = {
   knotsToKmh,
   parseTzOffsetToMinutes,
   rotateJpegIfNeeded,
+  transformJpeg,
   runFfmpegExtractBatch,
   runWithConcurrency,
   writeGpsExif,

@@ -3,8 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { exiftool } = require('exiftool-vendored');
-
-const sharp = require('sharp');
+const { transformJpeg } = require('./image-transform');
 
 function usage() {
   console.log(`用法:
@@ -116,17 +115,13 @@ async function transformOne(input, output, opts) {
   if (!opts.overwrite && fs.existsSync(output)) return 'skipped';
 
   const crop = opts.crop;
-  await sharp(input)
-    .rotate(opts.rotateDeg, { background: { r: 0, g: 0, b: 0, alpha: 1 } })
-    .extract({
-      left: opts.cropOrigin.left,
-      top: opts.cropOrigin.top,
-      width: crop.width,
-      height: crop.height,
-    })
-    .withMetadata({ orientation: 1 })
-    .jpeg({ quality: opts.jpegQuality, mozjpeg: true })
-    .toFile(output);
+  await transformJpeg({
+    input,
+    output,
+    rotateDeg: opts.rotateDeg,
+    crop: { left: opts.cropOrigin.left, top: opts.cropOrigin.top, width: crop.width, height: crop.height },
+    jpegQuality: opts.jpegQuality,
+  });
 
   await exiftool.write(
     output,
