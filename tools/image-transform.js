@@ -14,50 +14,6 @@ function ffmpegQvToSharpQuality(qv) {
   return Math.min(100, Math.max(1, Math.round(100 - ((q - 1) / 30) * 99)));
 }
 
-function mcuSizeForSubsampling(chromaSubsampling) {
-  return {
-    '4:4:4': { width: 8, height: 8 },
-    '4:4:0': { width: 8, height: 16 },
-    '4:2:2': { width: 16, height: 8 },
-    '4:2:0': { width: 16, height: 16 },
-  }[chromaSubsampling] || { width: 16, height: 16 };
-}
-
-async function inspectJpegTransformLimits(input) {
-  const meta = await loadSharp()(input).metadata();
-  return {
-    width: meta.width,
-    height: meta.height,
-    chromaSubsampling: meta.chromaSubsampling || 'unknown',
-    mcu: mcuSizeForSubsampling(meta.chromaSubsampling),
-  };
-}
-
-function suggestLosslessCrops(source, crop) {
-  const mcu = source.mcu;
-  const right = crop.left + crop.width;
-  const bottom = crop.top + crop.height;
-  const inward = {
-    left: Math.ceil(crop.left / mcu.width) * mcu.width,
-    top: Math.ceil(crop.top / mcu.height) * mcu.height,
-    right: Math.floor(right / mcu.width) * mcu.width,
-    bottom: Math.floor(bottom / mcu.height) * mcu.height,
-  };
-  const outward = {
-    left: Math.floor(crop.left / mcu.width) * mcu.width,
-    top: Math.floor(crop.top / mcu.height) * mcu.height,
-    right: Math.ceil(right / mcu.width) * mcu.width,
-    bottom: Math.ceil(bottom / mcu.height) * mcu.height,
-  };
-  for (const candidate of [inward, outward]) {
-    candidate.right = Math.min(candidate.right, source.width);
-    candidate.bottom = Math.min(candidate.bottom, source.height);
-    candidate.width = Math.max(0, candidate.right - candidate.left);
-    candidate.height = Math.max(0, candidate.bottom - candidate.top);
-  }
-  return { inward, outward };
-}
-
 async function replaceWithTempFile(inputPath, suffix, operation) {
   const tmpPath = `${inputPath}.${suffix}.tmp.jpg`;
   try {
@@ -157,8 +113,6 @@ async function cropTopLeftIfNeeded(jpegPath, crop, jpegQuality) {
 module.exports = {
   cropTopLeftIfNeeded,
   ffmpegQvToSharpQuality,
-  inspectJpegTransformLimits,
   rotateJpegIfNeeded,
-  suggestLosslessCrops,
   transformJpeg,
 };
