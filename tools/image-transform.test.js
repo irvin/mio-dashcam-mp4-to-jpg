@@ -34,4 +34,28 @@ describe('transformJpeg', () => {
 
     assert.deepStrictEqual(fs.readFileSync(input), before);
   });
+
+  it('clamps a crop that extends beyond the transformed canvas', async () => {
+    const dir = makeTempDir();
+    const input = path.join(dir, 'input.jpg');
+    await sharp({
+      create: { width: 64, height: 48, channels: 3, background: '#785028' },
+    }).jpeg({ quality: 90 }).toFile(input);
+    const originalWarn = console.warn;
+    const warnings = [];
+    console.warn = (message) => warnings.push(message);
+    try {
+      await transformJpeg({
+        input,
+        crop: { left: 50, top: 40, width: 30, height: 20 },
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const meta = await sharp(input).metadata();
+    assert.deepStrictEqual({ width: meta.width, height: meta.height }, { width: 14, height: 8 });
+    assert.strictEqual(warnings.length, 1);
+    assert.match(warnings[0], /改裁 14x8/);
+  });
 });

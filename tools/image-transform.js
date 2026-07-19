@@ -14,6 +14,18 @@ function ffmpegQvToSharpQuality(qv) {
   return Math.min(100, Math.max(1, Math.round(100 - ((q - 1) / 30) * 99)));
 }
 
+function rotatedDimensions(width, height, rotateDeg) {
+  const normalized = ((rotateDeg % 360) + 360) % 360;
+  const near = (value) => Math.abs(normalized - value) < 1e-10;
+  if (near(0) || near(180)) return { width, height };
+  if (near(90) || near(270)) return { width: height, height: width };
+  const radians = normalized * Math.PI / 180;
+  return {
+    width: Math.ceil(Math.abs(width * Math.cos(radians)) + Math.abs(height * Math.sin(radians)) - 1e-10),
+    height: Math.ceil(Math.abs(width * Math.sin(radians)) + Math.abs(height * Math.cos(radians)) - 1e-10),
+  };
+}
+
 async function replaceWithTempFile(inputPath, suffix, operation) {
   const tmpPath = `${inputPath}.${suffix}.tmp.jpg`;
   try {
@@ -53,11 +65,28 @@ async function transformJpeg({ input, output = input, rotateDeg = 0, crop = null
       });
     }
     if (hasCrop) {
+      const meta = await sharp(input).metadata();
+      if (!meta.width || !meta.height) throw new Error('無法讀取圖片尺寸');
+      const canvas = hasRotation
+        ? rotatedDimensions(meta.width, meta.height, rotateDeg)
+        : { width: meta.width, height: meta.height };
+      const left = Math.max(0, Math.floor(Number(crop.left) || 0));
+      const top = Math.max(0, Math.floor(Number(crop.top) || 0));
+      if (left >= canvas.width || top >= canvas.height) {
+        throw new Error(`crop-origin ${left}x${top} 超出圖面 ${canvas.width}x${canvas.height}: ${input}`);
+      }
+      const width = Math.min(Math.floor(crop.width), canvas.width - left);
+      const height = Math.min(Math.floor(crop.height), canvas.height - top);
+      if (width !== crop.width || height !== crop.height) {
+        console.warn(
+          `crop ${crop.width}x${crop.height}+${left}+${top} 大於圖面 ${canvas.width}x${canvas.height}，改裁 ${width}x${height}：${input}`
+        );
+      }
       pipeline.extract({
-        left: Math.max(0, Math.floor(Number(crop.left) || 0)),
-        top: Math.max(0, Math.floor(Number(crop.top) || 0)),
-        width: crop.width,
-        height: crop.height,
+        left,
+        top,
+        width,
+        height,
       });
     }
     await pipeline
@@ -129,5 +158,6 @@ module.exports = {
   cropTopLeftIfNeeded,
   ffmpegQvToSharpQuality,
   rotateJpegIfNeeded,
+  rotatedDimensions,
   transformJpeg,
 };
