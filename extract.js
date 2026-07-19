@@ -13,7 +13,9 @@
 const fs = require('fs');
 const path = require('path');
 const {
+  cropTopLeftIfNeeded,
   ffmpegQvToSharpQuality,
+  rotateJpegIfNeeded,
   transformJpeg,
 } = require('./tools/image-transform');
 const { spawnSync } = require('child_process');
