@@ -30,14 +30,29 @@ async function replaceWithTempFile(inputPath, suffix, operation) {
 
 /** 一次完成旋轉與裁切，避免同一張 JPEG 被重新編碼兩次。 */
 async function transformJpeg({ input, output = input, rotateDeg = 0, crop = null, jpegQuality = 1 }) {
+  const hasRotation = Number.isFinite(rotateDeg) && rotateDeg !== 0;
+  const hasCrop =
+    crop &&
+    Number.isFinite(crop.width) &&
+    Number.isFinite(crop.height) &&
+    crop.width >= 1 &&
+    crop.height >= 1;
+  if (!hasRotation && !hasCrop) {
+    if (output !== input) fs.copyFileSync(input, output);
+    return;
+  }
+
   const sharp = loadSharp();
   const sharpQ = ffmpegQvToSharpQuality(jpegQuality);
   const tempOutput = output === input ? `${input}.transform.tmp.jpg` : output;
   try {
-    const pipeline = sharp(input).rotate(rotateDeg, {
-      background: { r: 0, g: 0, b: 0, alpha: 1 },
-    });
-    if (crop) {
+    let pipeline = sharp(input);
+    if (hasRotation) {
+      pipeline = pipeline.rotate(rotateDeg, {
+        background: { r: 0, g: 0, b: 0, alpha: 1 },
+      });
+    }
+    if (hasCrop) {
       pipeline.extract({
         left: Math.max(0, Math.floor(Number(crop.left) || 0)),
         top: Math.max(0, Math.floor(Number(crop.top) || 0)),
